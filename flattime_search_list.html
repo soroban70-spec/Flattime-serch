@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>しらべてみるリスト</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Meiryo,Arial;}
+    body{margin:20px;background:#f7f7fb;color:#111}
+    h1{font-size:18px;margin:0 0 12px}
+    .panel{background:#fff;padding:12px;border-radius:10px;box-shadow:0 6px 18px rgba(20,20,60,0.06);max-width:900px}
+    .row{display:flex;gap:8px;align-items:flex-start}
+    textarea{flex:1;padding:10px;border-radius:8px;border:1px solid #e0e3ee;font-size:14px;min-height:48px;resize:vertical}
+    button{padding:8px 12px;border-radius:8px;border:0;cursor:pointer}
+    .add{background:#3b82f6;color:white}
+    .columns{display:flex;flex-direction:column;gap:24px;margin-top:12px}
+    .col h2{font-size:14px;margin:0 0 8px}
+    ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
+    li{display:flex;align-items:center;gap:8px;padding:10px;border-radius:8px;border:1px solid #eef2ff;background:#fff}
+    .entry-text{flex:1;white-space:pre-wrap;word-break:break-word;font-size:14px}
+    .open-btn{background:#60a5fa;color:#04264b}
+    .open-btn.has-link{background:#34d399;color:#04382f}
+    .status-btn{background:#f3f4f6;color:#111;border-radius:6px;padding:6px 8px}
+    .delete{background:#ef4444;color:white}
+    .meta{font-size:12px;color:#666}
+    .small{font-size:12px;color:#555}
+    .controls{display:flex;gap:6px;align-items:center}
+    .hint{margin-top:10px;font-size:13px;color:#444}
+    .done{opacity:0.6;background:#f3f4f6}
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>しらべてみるリスト</h1>
+    <div class="row">
+      <textarea id="inputText" placeholder="追加したい文字列（URLでも可）を入力。Shift+Enterで改行、Enterで追加"></textarea>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button id="addBtn" class="add">追加</button>
+        <button id="randBtn">ランダム選択</button>
+      </div>
+    </div>
+    <div class="hint">・追加された項目はブラウザに保存されます。<br>・Openは新規タブで開きます。</div>
+
+    <div class="columns">
+      <div class="col">
+        <h2>未調査（メイン）</h2>
+        <ul id="list"></ul>
+      </div>
+      <div class="col">
+        <h2>調べ済（下位）</h2>
+        <ul id="searchedList"></ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = 'flattime_search_list_v2';
+    const urlRegex = /((?:https?:\/\/|www\.)[\w\-._~:\/?#\[\]@!$&'()*+,;=%]+|\b[\w\-]+\.[a-z]{2,6}(?:\/[\w\-._~:\/?#\[\]@!$&'()*+,;=%]*)?\b)/gi;
+
+    const input = document.getElementById('inputText');
+    const addBtn = document.getElementById('addBtn');
+    const randBtn = document.getElementById('randBtn');
+    const listEl = document.getElementById('list');
+    const searchedEl = document.getElementById('searchedList');
+
+    let items = load();
+
+    function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); }
+    function load(){ try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }catch(e){ return []; } }
+
+    function extractFirstURL(text){
+      const m = text.match(urlRegex);
+      if(!m) return null;
+      let url = m[0];
+      if(url.startsWith('www.')) url = 'https://' + url;
+      if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
+      return url;
+    }
+
+    function createItemEl(item){
+      const li = document.createElement('li');
+      if(item.status === 'done') li.classList.add('done');
+
+      const statusBtn = document.createElement('button');
+      statusBtn.className = 'status-btn';
+      statusBtn.textContent = item.status === 'done' ? '戻す' : '移動';
+      statusBtn.addEventListener('click', ()=>{ toggleStatus(item.id); });
+
+      const textDiv = document.createElement('div');
+      textDiv.className = 'entry-text';
+      textDiv.textContent = item.text;
+
+      const controls = document.createElement('div');
+      controls.className = 'controls';
+
+      const openBtn = document.createElement('button');
+      openBtn.className = 'open-btn';
+      const firstUrl = extractFirstURL(item.text);
+      if(firstUrl) openBtn.classList.add('has-link');
+      openBtn.textContent = 'Open';
+
+      function openAction(e){
+        e.preventDefault();
+        const url = extractFirstURL(item.text);
+        if(url){
+          window.open(url, '_blank', 'noopener');
+        } else {
+          const q = encodeURIComponent(item.text);
+          window.open('https://www.google.com/search?q=' + q, '_blank', 'noopener');
+        }
+      }
+      openBtn.addEventListener('click', openAction);
+
+	openBtn.addEventListener('auxclick', function(e){
+		if (e.button === 1) {  // 中クリック
+			e.preventDefault();  // ボタンによる遷移を抑止
+			openAction(e);       // 新規タブを開く（フォーカス移動なし）
+		}
+	});
+
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'delete';
+      delBtn.textContent = '削除';
+      delBtn.addEventListener('click', ()=>{ removeItem(item.id); });
+
+      controls.appendChild(openBtn);
+      controls.appendChild(delBtn);
+
+      const wrapper = document.createElement('div');
+      wrapper.style.display = 'flex';
+      wrapper.style.flexDirection = 'column';
+      wrapper.style.flex = '1';
+      wrapper.appendChild(textDiv);
+
+      li.appendChild(statusBtn);
+      li.appendChild(wrapper);
+      li.appendChild(controls);
+
+      return li;
+    }
+
+    function render(){
+      listEl.innerHTML = '';
+      searchedEl.innerHTML = '';
+      items.forEach(it=>{
+        const el = createItemEl(it);
+        if(it.status === 'todo') listEl.appendChild(el);
+        else searchedEl.appendChild(el);
+      });
+    }
+
+    function addItemFromInput(){
+      const text = input.value.trim();
+      if(!text) return;
+      const it = {id: Date.now().toString(36) + Math.random().toString(36).slice(2,6), text, createdAt: Date.now(), status:'todo'};
+      items.unshift(it);
+      save(); render(); input.value=''; input.focus();
+    }
+
+    function toggleStatus(id){
+      const idx = items.findIndex(i=>i.id===id);
+      if(idx===-1) return;
+      items[idx].status = items[idx].status === 'todo' ? 'done' : 'todo';
+      save(); render();
+    }
+
+    function removeItem(id){ items = items.filter(i=>i.id!==id); save(); render(); }
+
+    input.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' && !e.shiftKey){
+        e.preventDefault();
+        addItemFromInput();
+      }
+    });
+
+    addBtn.addEventListener('click', addItemFromInput);
+    randBtn.addEventListener('click', ()=>{
+      const todo = items.filter(i=>i.status==='todo');
+      if(todo.length===0) return;
+      const pick = todo[Math.floor(Math.random()*todo.length)];
+      const url = extractFirstURL(pick.text);
+      if(url) window.open(url, '_blank', 'noopener');
+      else window.open('https://www.google.com/search?q=' + encodeURIComponent(pick.text), '_blank', 'noopener');
+    });
+
+    render();
+  </script>
+</body>
+</html>
